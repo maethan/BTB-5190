@@ -80,6 +80,16 @@ matching_rows = ((final_df['home_line'] < 0) & (final_df['label'] == 1)) | \
 matching_percentage = (matching_rows.sum() / len(final_df)) * 100
 print(f"Rate that the home_line is correct: {matching_percentage}")
 
+"""# Data Visualization"""
+
+for col in final_df.columns:
+  plt.figure(figsize = (10, 6))
+  sns.histplot(final_df[col], kde=True)
+  plt.title(f'Distribution of {col}')
+  plt.xlabel(col)
+  plt.ylabel('Frequency')
+  plt.show()
+
 """# Creating Test/Training Datasets
 
 First, we use sklearn's ```train_test_split``` to split from the ```cleaned_news_df``` into training and testing sets.
@@ -234,6 +244,12 @@ $L=\frac{1}{n}\sum_{i=1}^n[y_ilog(p_o)+(1-y_i)log(1-p_o)]+\frac{c}{n}\sum_{i=1}^
 
 Where $p_o=\sigma(\theta^Tx_i)$
 
+Since we want to apply this in gradient descent, the gradient of the inner penalty term is:
+
+$[p_o(1-p_o)x_i]*a-[p_o(1-p_o)x_i]*b$
+
+Where $a$ is an indicator if $p_o+p_c+1\geq 0$ and b is an indicator if $1-p_o-p_c\geq 0$
+
 Custom logistic regression implementation referenced from:
 https://medium.com/@koushikkushal95/logistic-regression-from-scratch-dfb8527a4226
 """
@@ -270,7 +286,7 @@ class CustomLogisticRegression:
         return A
 
     def penalty(self, X, pred):
-      sig_grad = (1 - pred)
+      sig_grad = pred * (1 - pred)
       p_cs = X[:,0]
       pena = 0
       for i, sig_g in enumerate(sig_grad):
@@ -291,7 +307,7 @@ class CustomLogisticRegression:
               pena -= sig_g
 
 
-      return (self.c * pena / X.shape[1])
+      return (self.c * pena / X.shape[0])
 
     def fit(self, X, y):
         n_samples, n_features = X.shape
@@ -399,7 +415,7 @@ def count_differing(df):
     #        ((df['home_line'] > 0) & (df['label'] == 1))
     return matching_rows
 
-rates = [0, .001, 0.0015, 0.002, 0.003 , 0.005, 0.01, 0.0105, 0.011, 0.012, 0.013, .025 , 0.05, 0.07, 0.09, 0.095, .1, .2, .3, .5, 0.7, 1, 2]
+rates = [0, .001, 0.0015, 0.002, 0.003 , 0.005, 0.01, 0.0105, 0.011, 0.012, 0.013, .025 , 0.05, 0.07, 0.09, 0.095, .1, .2, .3, .5, 0.7, 1, 2, 4, 7, 10]
 eval_magnitude = [10, 50, 100, 500, 1000]
 different = []
 differents = {}
@@ -460,8 +476,108 @@ for mag in eval_magnitude:
   plt.plot(rates, diff_values, marker='o', label=f'Eval Magnitude {mag}')  # Add label for legend
 
 plt.xlabel('Rates')
-plt.ylabel('Number of Differing Predictions')
-plt.title('Number of Differing Predictions as a Function of Rates for Different Eval Magnitudes')
+plt.ylabel('Number of Correct Differing Predictions')
+plt.title('Number of Correct Differing Predictions as a Function of Rates for Different Eval Magnitudes')
+plt.grid(True)
+plt.legend()  # Add legend to the plot
+plt.show()
+
+plt.figure(figsize=(10, 6))  # Create one figure
+
+for mag in eval_magnitude:
+  different = differents[mag]
+  diff_values = [row[1] / mag for row in different]
+  plt.plot(rates, diff_values, marker='o', label=f'Eval Magnitude {mag}')  # Add label for legend
+
+plt.xlabel('Rates')
+plt.ylabel('Ratio of Correct Differing Predictions to Total Evaluated Predictions')
+plt.title('Number of Correct Differing Predictions as a Function of Rates for Different Eval Magnitudes')
+plt.grid(True)
+plt.legend()  # Add legend to the plot
+plt.show()
+
+def count_differing(df):
+    matching_rows = ((df['home_line'] < 0) & (df['label'] == 0) & (df['predictions'] <= 0.5)) | \
+           ((df['home_line'] > 0) & (df['label'] == 1) & (df['predictions'] > 0.5))
+    # matching_rows = ((df['home_line'] < 0) & (df['label'] == 0)) | \
+    #        ((df['home_line'] > 0) & (df['label'] == 1))
+    return matching_rows
+
+rates = [0, .001, 0.0015, 0.002, 0.003 , 0.005, 0.01, 0.0105, 0.011, 0.012, 0.013, .025 , 0.05, 0.07, 0.09, 0.095, .1, .2, .3, .5, 0.7, 1, 2, 4, 7, 10]
+eval_magnitude = [10, 50, 100, 200, len(X_test)]
+different = []
+differents = {}
+
+for mag in eval_magnitude:
+  differents[mag] = []
+
+
+for c in rates:
+    lr = CustomLogisticRegression()
+    lr.c = c
+    lr.fit(X_train.values, y_train.values)
+
+    output_df = X_test
+    output_df['label'] = y_test
+    features = output_df.drop(columns=['label'])
+
+    # Create a new list to store the predictions
+    predictions = []
+
+    # Iterate through each row and apply rf.predict()
+    for index, row in features.iterrows():
+        # print(row)
+        # Exclude the label column for prediction
+        if (len(row) == 19):
+          prediction = lr.predict_proba(row.values)
+        else:
+          prediction = lr.predict_proba(row.values[:-1])
+
+        # Append the prediction to the list
+        predictions.append(prediction)
+
+    # Add predictions as a new column to the original DataFrame
+    output_df['predictions'] = predictions
+    output_df = output_df[['label', 'home_line', 'predictions']].sort_values(by='predictions', ascending=False)
+
+    for mag in eval_magnitude:
+        # Select the first 20 rows
+        first = output_df.head(mag)
+
+        # Select the last 20 rows
+        last = output_df.tail(200)
+        # print(f"first: {first}, last: {last}")
+        # different.append((c, count_differing(first).sum() + count_differing(last).sum()))
+        differents[mag].append((c, count_differing(first).sum()))
+
+
+
+# print(different)
+
+plt.figure(figsize=(10, 6))  # Create one figure
+
+for mag in eval_magnitude:
+  different = differents[mag]
+  diff_values = [row[1]  for row in different]
+  plt.plot(rates, diff_values, marker='o', label=f'Eval Magnitude {mag}')  # Add label for legend
+
+plt.xlabel('Rates')
+plt.ylabel('Number of Correct Differing Predictions')
+plt.title('(Test Data) Number of Correct Differing Predictions as a Function of Rates for Different Eval Magnitudes')
+plt.grid(True)
+plt.legend()  # Add legend to the plot
+plt.show()
+
+plt.figure(figsize=(10, 6))  # Create one figure
+
+for mag in eval_magnitude:
+  different = differents[mag]
+  diff_values = [row[1] / mag for row in different]
+  plt.plot(rates, diff_values, marker='o', label=f'Eval Magnitude {mag}')  # Add label for legend
+
+plt.xlabel('Rates')
+plt.ylabel('Ratio of Correct Differing Predictions to Total Evaluated Predictions')
+plt.title('(Test Data) Number of Correct Differing Predictions as a Function of Rates for Different Eval Magnitudes')
 plt.grid(True)
 plt.legend()  # Add legend to the plot
 plt.show()
